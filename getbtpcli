@@ -9,6 +9,7 @@
 # Examples:
 # getbtpcli         gets & installs latest version; shows the version nr
 # getbtpcli --test  gets & shows what the latest version is; no install
+# getbtpcli --yes   accepts license by default; installs w/o interaction
 # getbtpcli 2.8.0   gets & installs version 2.8.0, shows the version nr
 
 set -o errexit
