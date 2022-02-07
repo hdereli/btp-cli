@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# getbtpcli - Get btp CLI. Specify a version, or have it default to
+# getting the latest. Has a test mode (-t or --test) to just retrieve
+# and show what the version is (only really makes sense when defaulting
+# to latest), without installing.
+
+# Usage: getbtpcli [-t|--test] [-y|--yes] [version]
+# Examples:
+# getbtpcli         gets & installs latest version; shows the version nr
+# getbtpcli --test  gets & shows what the latest version is; no install
+# getbtpcli 2.8.0   gets & installs version 2.8.0, shows the version nr
+
+set -o errexit
+
+declare PLATFORM
+PLATFORM="$(uname -s)"
+
+declare -r ARCH="${PLATFORM,,}-amd64"
+declare -r TARGETDIR="$HOME/bin"
+declare -r LICENCE="tools.hana.ondemand.com/developer-license-3_1.txt"
+
+confirm_licence_acceptance() {
+
+  # Ensure licence acceptance
+
+  local proceed
+  echo "Proceed (with Enter) only if you accept the SAP Developer Licence 3.1"
+  echo -n "(see https://$LICENCE) ..."
+  # shellcheck disable=2034
+  read -r proceed
+
+}
+
+dequarantine() {
+
+  # Remove any Apple quarantine
+
+  local file=$1
+  xattr -d com.apple.quarantine "$file" 2> /dev/null || true
+
+}
+
+retrieve() {
+
+  # Download tarball of latest version and extract the btp binary
+
+  local desired=$1
+  local tempdir=$2
+  local filename="btp-cli-$ARCH-$desired.tar.gz"
+
+  cd "$tempdir" \
+    && curl \
+      --fail \
+      --silent \
+      --location \
+      --output "$filename" \
+      --header "Cookie: eula_3_1_agreed=$LICENCE; path=/;" \
+      "https://tools.hana.ondemand.com/additional/$filename" \
+    && tar \
+      --file "$filename" \
+      --extract \
+      --gunzip \
+      --strip-components 1 \
+      "$ARCH/btp"
+
+}
+
+get_version() {
+
+  # Determine the version (uses the proper grep, from GNU). We need to point to a temp, empty
+  # config file because older versions of btp don't like seeing newer versions of any config content.
+
+  local tempdir=$1
+  "$tempdir/btp" --config "$tempdir/config" --version 2> /dev/null | grep -P -o '(?<=v)\d+\.\d+\.\d+'
+
+}
+
+main() {
+
+  # Move to a temporary directory; extract and check version, and
+  # (unless --test mode) install, setting up symlink.
+
+  local desired tempdir ver testmode=false acceptall=false
+
+  # Determine if we're in test mode
+  [[ $1 =~ ^(-t|--test)$ ]] && {
+    testmode=true
+    shift
+  }
+
+  # Determine if accept all default
+  [[ $1 =~ ^(-y|--yes)$ ]] && {
+    acceptall=true
+    shift
+  }  
+
+  desired="${1:-latest}"
+
+  # Couple of setup activities if we're going to try to install
+  # - make sure the target dir exists
+  # - make sure the user confirms acceptance of the licence
+  if [ $testmode = false ] && [ $acceptall = false ]; then
+    [[ ! -d "$TARGETDIR" ]] && mkdir "$TARGETDIR"
+    confirm_licence_acceptance
+  fi
+
+  # Set up temporary directory and move into it
+  tempdir="$(mktemp -d)"
+
+  # Retrieve latest tarball and extract the binary
+  retrieve "$desired" "$tempdir" || {
+    echo "Failed to find version $desired"
+    exit 1
+  }
+
+  # Dequarantine if on macOS
+  [[ $PLATFORM =~ Darwin ]] && dequarantine "$tempdir/btp"
+
+  # Determine version
+  ver="$(get_version "$tempdir")"
+  echo "Version is $ver"
+
+  # Unless we're in test mode, move binary to target directory and
+  # set symlink
+  if [[ $testmode = false ]]; then
+    cd "$TARGETDIR" \
+      && mv "$tempdir/btp" "./btp-$ver" \
+      && ln -f -s "btp-$ver" btp
+  fi
+
+  # Clean up by removing temporary directory
+  rm -rf "$tempdir"
+
+}
+
+main "$@"
